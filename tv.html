@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tabela de Preços</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+   * Tabela de preços para as TVs (AbleSign).
+   * Link da TV2: tv.html?tv=TV2   |   Link da TV3: tv.html?tv=TV3
+   * Lê as abas "Produtos" e "Telas" da planilha e se atualiza sozinha.
+   */
+  :root {
+    --fundo: #0b0f19;
+    --secao: #141b2d;
+    --titulo-fundo: #c8102e;
+    --titulo-texto: #ffffff;
+    --nome: #f2f4f8;
+    --preco: #ffd23f;
+    --linha: rgba(255, 255, 255, 0.08);
+    --oferta-fundo: #ffd23f;
+    --oferta-texto: #c8102e;
+    --fs: 24px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--fundo); }
+  body {
+    font-family: 'Roboto Condensed', Roboto, Arial, sans-serif;
+    color: var(--nome);
+    font-size: var(--fs);
+  }
+  #tela { display: flex; gap: 0.5em; width: 100vw; height: 100vh; padding: 0.5em; }
+  .bloco { display: flex; flex-direction: column; gap: 0.5em; min-width: 0; }
+  .linha { display: flex; gap: 0.5em; min-height: 0; }
+  .secao {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: var(--secao); border-radius: 0.35em; overflow: hidden;
+  }
+  .secao h2 {
+    background: var(--titulo-fundo); color: var(--titulo-texto);
+    font-size: 1.05em; font-weight: 800; letter-spacing: 0.04em;
+    text-align: center; padding: 0.18em 0.4em; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .itens { flex: 1; display: grid; column-gap: 1.2em; padding: 0.2em 0.6em; min-height: 0; overflow: hidden; align-content: space-evenly; }
+  .item {
+    display: flex; align-items: baseline; gap: 0.4em;
+    padding: 0.12em 0; border-bottom: 1px solid var(--linha); min-width: 0;
+  }
+  .nome { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preco { font-weight: 800; color: var(--preco); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .preco small { font-size: 0.6em; font-weight: 700; margin-right: 0.15em; }
+  .item.oferta { background: var(--oferta-fundo); border-radius: 0.2em; padding-left: 0.3em; padding-right: 0.3em; border-bottom-color: transparent; }
+  .item.oferta .nome, .item.oferta .preco { color: var(--oferta-texto); font-weight: 800; }
+  .selo { font-size: 0.55em; font-weight: 800; background: var(--oferta-texto); color: var(--oferta-fundo); padding: 0.1em 0.35em; border-radius: 0.2em; align-self: center; }
+  #aviso { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; font-size: 32px; padding: 1em; color: #fff; }
+</style>
+</head>
+<body>
+<div id="tela"></div>
+<div id="aviso"></div>
+<script>
+  // ID da planilha das TVs (conta donellisolucoes). Ela precisa estar como "Qualquer pessoa com o link: Leitor".
+  const PLANILHA = '1tLuA-6c8jZk6Zs-ddP0AFAxqcNO1W6cVoa-H4YFrtYM';
+  const ATUALIZAR_SEGUNDOS = 30;
+
+  const params = new URLSearchParams(location.search);
+  const TV = (params.get('tv') || 'TV2').toUpperCase();
+
+  function urlAba(aba) {
+    return `https://docs.google.com/spreadsheets/d/${PLANILHA}/gviz/tq?tqx=out:csv&headers=1` +
+      `&sheet=${encodeURIComponent(aba)}&_=${Date.now()}`;
+  }
+
+  function lerCSV(texto) {
+    const linhas = [];
+    let campo = '', linha = [], aspas = false;
+    for (let i = 0; i < texto.length; i++) {
+      const c = texto[i];
+      if (aspas) {
+        if (c === '"' && texto[i + 1] === '"') { campo += '"'; i++; }
+        else if (c === '"') aspas = false;
+        else campo += c;
+      } else if (c === '"') aspas = true;
+      else if (c === ',') { linha.push(campo); campo = ''; }
+      else if (c === '\n') { linha.push(campo); linhas.push(linha); linha = []; campo = ''; }
+      else if (c !== '\r') campo += c;
+    }
+    if (campo || linha.length) { linha.push(campo); linhas.push(linha); }
+    const cab = linhas.shift() || [];
+    return linhas.map(l => Object.fromEntries(cab.map((h, i) => [h.trim(), (l[i] || '').trim()])));
+  }
+
+  async function baixar(aba) {
+    const r = await fetch(urlAba(aba), { cache: 'no-store' });
+    if (!r.ok) throw new Error(`Aba ${aba}: HTTP ${r.status}`);
+    return lerCSV(await r.text());
+  }
+
+  // "R$ 3,19", "3,19" ou "3.19" -> 3.19
+  function numero(v) {
+    let s = String(v).replace(/[^\d,.-]/g, '');
+    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    const n = parseFloat(s);
+    return isFinite(n) ? n : NaN;
+  }
+
+  function precoHTML(n) {
+    return `<small>R$</small>${n.toFixed(2).replace('.', ',')}`;
+  }
+
+  function esc(s) {
+    return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  function montar(produtos, telas) {
+    const minhas = telas
+      .filter(t => t['TV'].toUpperCase() === TV && t['Seção'])
+      .map(t => ({
+        secao: t['Seção'],
+        bloco: Number(t['Bloco']) || 1,
+        linha: Number(t['Linha']) || 1,
+        colunas: Math.max(1, Number(t['Colunas']) || 1),
+      }));
+
+    const itensDa = secao => produtos
+      .filter(p => p['TV'].toUpperCase() === TV && p['Seção'] === secao &&
+                   p['Exibir'].toUpperCase() === 'SIM' && numero(p['Preço']) > 0)
+      .sort((a, b) => numero(a['Ordem']) - numero(b['Ordem']));
+
+    const blocos = {};
+    minhas.forEach(s => {
+      s.itens = itensDa(s.secao);
+      s.altura = Math.ceil(s.itens.length / s.colunas) + 1.4; // +1.4 = título
+      ((blocos[s.bloco] = blocos[s.bloco] || {})[s.linha] = blocos[s.bloco][s.linha] || []).push(s);
+    });
+
+    const tela = document.getElementById('tela');
+    tela.innerHTML = '';
+    Object.keys(blocos).sort((a, b) => a - b).forEach(b => {
+      const linhas = Object.keys(blocos[b]).sort((x, y) => x - y).map(l => blocos[b][l]);
+      const largura = Math.max(...linhas.map(secs => secs.reduce((t, s) => t + s.colunas, 0)));
+      const elBloco = document.createElement('div');
+      elBloco.className = 'bloco';
+      elBloco.style.flex = `${largura} 1 0`;
+      linhas.forEach(secs => {
+        const elLinha = document.createElement('div');
+        elLinha.className = 'linha';
+        elLinha.style.flex = `${Math.max(...secs.map(s => s.altura))} 1 0`;
+        secs.forEach(s => {
+          const elSecao = document.createElement('section');
+          elSecao.className = 'secao';
+          elSecao.style.flex = `${s.colunas} 1 0`;
+          const porColuna = Math.ceil(s.itens.length / s.colunas) || 1;
+          elSecao.innerHTML = `<h2>${esc(s.secao)}</h2>
+            <div class="itens" style="grid-template-columns: repeat(${s.colunas}, minmax(0, 1fr));
+                 grid-template-rows: repeat(${porColuna}, auto); grid-auto-flow: column;">
+              ${s.itens.map(p => {
+                const oferta = String(p['Oferta']).toUpperCase() === 'TRUE';
+                return `<div class="item${oferta ? ' oferta' : ''}">
+                  <span class="nome">${esc(p['Nome na TV'])}</span>
+                  ${oferta ? '<span class="selo">OFERTA</span>' : ''}
+                  <span class="preco">${precoHTML(numero(p['Preço']))}</span>
+                </div>`;
+              }).join('')}
+            </div>`;
+          elLinha.appendChild(elSecao);
+        });
+        elBloco.appendChild(elLinha);
+      });
+      tela.appendChild(elBloco);
+    });
+    ajustarFonte();
+  }
+
+  // Maior fonte possível em que tudo cabe na tela sem cortar nomes.
+  function ajustarFonte() {
+    const raiz = document.documentElement.style;
+    const cabe = () => [...document.querySelectorAll('.itens')].every(el => el.scrollHeight <= el.clientHeight + 1) &&
+                       [...document.querySelectorAll('.nome')].every(el => el.scrollWidth <= el.clientWidth + 1);
+    let min = 8, max = Math.max(16, window.innerHeight / 12);
+    for (let i = 0; i < 14; i++) {
+      const meio = (min + max) / 2;
+      raiz.setProperty('--fs', meio + 'px');
+      if (cabe()) min = meio; else max = meio;
+    }
+    raiz.setProperty('--fs', min + 'px');
+  }
+
+  function aviso(msg) {
+    const el = document.getElementById('aviso');
+    el.textContent = msg;
+    el.style.display = msg ? 'flex' : 'none';
+  }
+
+  let carregouUmaVez = false;
+  let ultimoConteudo = '';
+  async function atualizar() {
+    try {
+      const [produtos, telas] = await Promise.all([baixar('Produtos'), baixar('Telas')]);
+      // Só redesenha a tela quando algo mudou na planilha.
+      const conteudo = JSON.stringify([produtos, telas]);
+      if (conteudo === ultimoConteudo) return;
+      ultimoConteudo = conteudo;
+      montar(produtos, telas);
+      aviso(document.querySelector('.item') ? '' : `Nenhum produto para ${TV}. Confira as abas Produtos e Telas.`);
+      carregouUmaVez = true;
+    } catch (e) {
+      // Sem internet ou planilha fora do ar: mantém a última tabela na tela.
+      if (!carregouUmaVez) aviso('Carregando tabela de preços...');
+      console.error(e);
+    }
+  }
+
+  atualizar();
+  setInterval(atualizar, ATUALIZAR_SEGUNDOS * 1000);
+  window.addEventListener('resize', ajustarFonte);
+</script>
+</body>
+</html>
